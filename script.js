@@ -1884,8 +1884,8 @@ function pickerH() {
     return `
 <div class="picker">
     <div class="picker-eye fu">Folio</div>
-    <h1 class="fu fu1">Build your <em>perfect</em><br>document</h1>
-    <p class="picker-sub fu fu2">Professional CV and Resume builder - live preview, print-ready export.</p>
+    <h1 class="fu fu1">Build your <em>resume or CV</em><br>in minutes</h1>
+    <p class="picker-sub fu fu2">Professional resume and CV maker with live preview, ATS tools, and print-ready export.</p>
     <div class="picker-cards fu fu3">
         <div class="pcard" onclick="setMode('resume')">
             <div class="pcard-icon">${I.d1}</div>
