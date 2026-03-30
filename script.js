@@ -23,8 +23,9 @@ const BASE_STATE = {
         location: "",
         linkedin: "",
         summary: "",
-        education: [{ degree: "", institution: "", year: "", details: "" }],
-        experience: [{ title: "", org: "", period: "", desc: "" }],
+        education: [{ degree: "", institution: "", location: "", year: "", score: "", details: "" }],
+        experience: [{ title: "", org: "", location: "", period: "", desc: "" }],
+        projects: [{ name: "", tech: "", period: "", highlights: "", link: "" }],
         publications: [{ title: "", venue: "", year: "", authors: "" }],
         skills: [{ cat: "", items: "" }],
         languages: [{ lang: "", level: "" }],
@@ -38,26 +39,29 @@ const BASE_STATE = {
         location: "",
         linkedin: "",
         summary: "",
-        experience: [{ title: "", company: "", period: "", bullets: "" }],
-        education: [{ degree: "", school: "", year: "" }],
+        experience: [{ title: "", company: "", location: "", period: "", bullets: "" }],
+        projects: [{ name: "", tech: "", period: "", highlights: "", link: "" }],
+        education: [{ degree: "", school: "", location: "", year: "", score: "" }],
         skills: "",
-        certifications: [{ name: "", org: "", year: "" }]
+        certifications: [{ name: "", org: "", year: "", url: "", offline: "" }]
     }
 };
 
 const DEFAULT_ENTRY = {
     cv: {
-        education: { degree: "", institution: "", year: "", details: "" },
-        experience: { title: "", org: "", period: "", desc: "" },
+        education: { degree: "", institution: "", location: "", year: "", score: "", details: "" },
+        experience: { title: "", org: "", location: "", period: "", desc: "" },
+        projects: { name: "", tech: "", period: "", highlights: "", link: "" },
         publications: { title: "", venue: "", year: "", authors: "" },
         skills: { cat: "", items: "" },
         languages: { lang: "", level: "" },
         awards: { title: "", year: "", org: "" }
     },
     resume: {
-        experience: { title: "", company: "", period: "", bullets: "" },
-        education: { degree: "", school: "", year: "" },
-        certifications: { name: "", org: "", year: "" }
+        experience: { title: "", company: "", location: "", period: "", bullets: "" },
+        projects: { name: "", tech: "", period: "", highlights: "", link: "" },
+        education: { degree: "", school: "", location: "", year: "", score: "" },
+        certifications: { name: "", org: "", year: "", url: "", offline: "" }
     }
 };
 
@@ -70,6 +74,7 @@ const I = {
     swap: `<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M8.5 2.5L10.5 4.5L8.5 6.5M3.5 9.5L1.5 7.5L3.5 5.5M10.5 4.5H1.5M10.5 7.5H1.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     d1: `<svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="8" y="4" width="24" height="32" rx="3" stroke="currentColor" stroke-width="1.3" opacity=".7"/><path d="M14 14H26M14 19H26M14 24H21" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity=".38"/></svg>`,
     d2: `<svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="6" y="9" width="20" height="25" rx="2.5" stroke="currentColor" stroke-width="1.3" opacity=".7"/><rect x="14" y="5" width="20" height="25" rx="2.5" stroke="currentColor" stroke-width="1.3" opacity=".28"/><path d="M10 17H22M10 21H22M10 25H17" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity=".38"/></svg>`,
+    grip: `<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><circle cx="3" cy="3" r="1" fill="currentColor"/><circle cx="9" cy="3" r="1" fill="currentColor"/><circle cx="3" cy="6" r="1" fill="currentColor"/><circle cx="9" cy="6" r="1" fill="currentColor"/><circle cx="3" cy="9" r="1" fill="currentColor"/><circle cx="9" cy="9" r="1" fill="currentColor"/></svg>`,
     x: `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M10.5 3.5L3.5 10.5M3.5 3.5L10.5 10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
 };
 
@@ -81,6 +86,8 @@ let printRestorePane = null;
 let a4HeightPxCache = null;
 let SLOT_DATA = null;
 const AI_KEY_SESSION = "folio_builder_openai_key_v1";
+const OPENAI_PROXY_PATH = "/api/openai/analyze";
+const OPENAI_PROXY_LOCAL_PORT = "8787";
 const AI_REMOTE = {
     apiKey: "",
     loading: false,
@@ -88,6 +95,7 @@ const AI_REMOTE = {
     note: "",
     result: null
 };
+const DRAG_STATE = { mode: "", key: "", from: -1 };
 
 const importInput = document.createElement("input");
 importInput.type = "file";
@@ -114,6 +122,23 @@ function esc(value) {
         .replace(/"/g, "&quot;");
 }
 
+function contactCellMarkup(rawValue) {
+    const value = text(rawValue).trim();
+    if (!value) return "";
+
+    const isUrl =
+        /^https?:\/\//i.test(value) ||
+        /^www\./i.test(value) ||
+        /linkedin\.com/i.test(value);
+
+    if (isUrl) {
+        const href = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+        return `<a class="doc-c doc-c-link" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(value)}</a>`;
+    }
+
+    return `<span class="doc-c">${esc(value)}</span>`;
+}
+
 function contactMarkup(contactList) {
     const list = (Array.isArray(contactList) ? contactList : []).filter(Boolean);
     if (!list.length) return "";
@@ -123,11 +148,30 @@ function contactMarkup(contactList) {
         rows.push(list.slice(i, i + 2));
     }
 
-    return `<div class="doc-contacts">${rows.map((row) => `<div class="doc-contacts-row">${row.map((c) => `<span class="doc-c">${esc(c)}</span>`).join("")}</div>`).join("")}</div>`;
+    return `<div class="doc-contacts">${rows.map((row) => `<div class="doc-contacts-row">${row.map((c) => contactCellMarkup(c)).join("")}</div>`).join("")}</div>`;
 }
 
 function text(value) {
     return typeof value === "string" ? value : "";
+}
+
+function commaSeparated(value) {
+    return text(value)
+        .split(/[,\n]+/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .join(", ");
+}
+
+function dragHandle(mode, key, index) {
+    return `<span class="drag-handle" title="Drag to reorder" draggable="true" ondragstart="dragStartItem('${mode}','${key}',${index},event)" ondragend="dragEndItem()">${I.grip}</span>`;
+}
+
+function externalLinkMarkup(rawUrl, label) {
+    const raw = text(rawUrl).trim();
+    if (!raw) return "";
+    const href = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    return `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(label || raw)}</a>`;
 }
 
 function normalizeTemplatePreset(value) {
@@ -192,6 +236,7 @@ function applyState(newState) {
 
         next.cv.education = normalizeArray(raw.education, DEFAULT_ENTRY.cv.education);
         next.cv.experience = normalizeArray(raw.experience, DEFAULT_ENTRY.cv.experience);
+        next.cv.projects = normalizeProjects(raw.projects, DEFAULT_ENTRY.cv.projects);
         next.cv.publications = normalizeArray(raw.publications, DEFAULT_ENTRY.cv.publications);
         next.cv.skills = normalizeArray(raw.skills, DEFAULT_ENTRY.cv.skills);
         next.cv.languages = normalizeArray(raw.languages, DEFAULT_ENTRY.cv.languages);
@@ -210,8 +255,9 @@ function applyState(newState) {
         next.resume.skills = text(raw.skills);
 
         next.resume.experience = normalizeArray(raw.experience, DEFAULT_ENTRY.resume.experience);
+        next.resume.projects = normalizeProjects(raw.projects, DEFAULT_ENTRY.resume.projects);
         next.resume.education = normalizeArray(raw.education, DEFAULT_ENTRY.resume.education);
-        next.resume.certifications = normalizeArray(raw.certifications, DEFAULT_ENTRY.resume.certifications);
+        next.resume.certifications = normalizeCertifications(raw.certifications, DEFAULT_ENTRY.resume.certifications);
     }
 
     Object.keys(S).forEach((key) => delete S[key]);
@@ -232,6 +278,46 @@ function normalizeArray(rawList, entryTemplate) {
         });
 
     return cleaned.length ? cleaned : [clone(entryTemplate)];
+}
+
+function normalizeProjects(rawList, entryTemplate) {
+    const source = Array.isArray(rawList) ? rawList : [];
+    const cleaned = normalizeArray(rawList, entryTemplate);
+    return cleaned.map((entry, index) => {
+        const raw = source[index] && typeof source[index] === "object" ? source[index] : {};
+        const highlights = text(entry.highlights) || text(raw.desc);
+        const link = text(entry.link) || text(raw.url) || text(raw.github) || text(raw.projectLink) || text(raw.project_url);
+        return {
+            ...entry,
+            highlights,
+            link
+        };
+    });
+}
+
+function normalizeCertifications(rawList, entryTemplate) {
+    const source = Array.isArray(rawList) ? rawList : [];
+    const cleaned = normalizeArray(rawList, entryTemplate);
+    return cleaned.map((entry, index) => {
+        const raw = source[index] && typeof source[index] === "object" ? source[index] : {};
+        const url = text(entry.url) || text(raw.link) || text(raw.credentialUrl) || text(raw.credential_url);
+        const rawOffline = text(entry.offline).trim().toLowerCase();
+        const offline = (
+            rawOffline === "yes"
+            || rawOffline === "true"
+            || rawOffline === "1"
+            || rawOffline === "on"
+            || raw.offline === true
+            || raw.isOffline === true
+            || raw.emailBased === true
+            || raw.email_based === true
+        ) ? "yes" : "";
+        return {
+            ...entry,
+            url,
+            offline
+        };
+    });
 }
 
 function defaultSlotData() {
@@ -357,16 +443,18 @@ function completionPercent() {
             root.summary
         ].forEach(count);
 
-        root.education.forEach((x) => [x.degree, x.institution, x.year, x.details].forEach(count));
-        root.experience.forEach((x) => [x.title, x.org, x.period, x.desc].forEach(count));
+        root.education.forEach((x) => [x.degree, x.institution, x.location, x.year, x.score, x.details].forEach(count));
+        root.experience.forEach((x) => [x.title, x.org, x.location, x.period, x.desc].forEach(count));
+        root.projects.forEach((x) => [x.name, x.tech, x.period, x.highlights].forEach(count));
         root.publications.forEach((x) => [x.title, x.venue, x.year, x.authors].forEach(count));
         root.skills.forEach((x) => [x.cat, x.items].forEach(count));
         root.languages.forEach((x) => [x.lang, x.level].forEach(count));
         root.awards.forEach((x) => [x.title, x.year, x.org].forEach(count));
     } else {
         [root.name, root.email, root.phone, root.website, root.location, root.linkedin, root.summary, root.skills].forEach(count);
-        root.experience.forEach((x) => [x.title, x.company, x.period, x.bullets].forEach(count));
-        root.education.forEach((x) => [x.degree, x.school, x.year].forEach(count));
+        root.experience.forEach((x) => [x.title, x.company, x.location, x.period, x.bullets].forEach(count));
+        root.projects.forEach((x) => [x.name, x.tech, x.period, x.highlights].forEach(count));
+        root.education.forEach((x) => [x.degree, x.school, x.location, x.year, x.score].forEach(count));
         root.certifications.forEach((x) => [x.name, x.org, x.year].forEach(count));
     }
 
@@ -521,7 +609,7 @@ function clampScore(value) {
 
 function parseSkillItems(rawText) {
     return text(rawText)
-        .split(/[,\n]/)
+        .split(/\n+/)
         .map((item) => item.trim())
         .filter(Boolean);
 }
@@ -557,8 +645,13 @@ function buildAIProfile() {
     if (S.mode === "resume") {
         const d = S.resume;
         const experience = d.experience.filter((entry) =>
-            text(entry.title).trim() || text(entry.company).trim() || text(entry.bullets).trim());
-        const bulletLines = experience.flatMap((entry) => lines(entry.bullets));
+            text(entry.title).trim() || text(entry.company).trim() || text(entry.location).trim() || text(entry.bullets).trim());
+        const projects = d.projects.filter((entry) =>
+            text(entry.name).trim() || text(entry.tech).trim() || text(entry.period).trim() || text(entry.highlights).trim() || text(entry.link).trim());
+        const bulletLines = [
+            ...experience.flatMap((entry) => lines(entry.bullets)),
+            ...projects.flatMap((entry) => lines(entry.highlights))
+        ];
         const skills = parseSkillItems(d.skills);
 
         return {
@@ -572,19 +665,28 @@ function buildAIProfile() {
                 phone: Boolean(text(d.phone).trim()),
                 link: Boolean(text(d.website).trim() || text(d.linkedin).trim())
             },
-            experienceCount: experience.length,
-            educationCount: d.education.filter((entry) => text(entry.degree).trim() || text(entry.school).trim()).length
+            experienceCount: experience.length + projects.length,
+            educationCount: d.education.filter((entry) => text(entry.degree).trim() || text(entry.school).trim() || text(entry.location).trim() || text(entry.score).trim()).length
         };
     }
 
     const d = S.cv;
     const experience = d.experience.filter((entry) =>
-        text(entry.title).trim() || text(entry.org).trim() || text(entry.desc).trim());
-    const bulletLines = experience.flatMap((entry) => {
+        text(entry.title).trim() || text(entry.org).trim() || text(entry.location).trim() || text(entry.desc).trim());
+    const projects = d.projects.filter((entry) =>
+        text(entry.name).trim() || text(entry.tech).trim() || text(entry.period).trim() || text(entry.highlights).trim() || text(entry.link).trim());
+    const bulletLines = [
+        ...experience.flatMap((entry) => {
         const fromDesc = lines(entry.desc);
         if (fromDesc.length) return fromDesc;
-        return [normalizeLine(`${text(entry.title)} ${text(entry.org)}`)].filter(Boolean);
-    });
+        return [normalizeLine(`${text(entry.title)} ${text(entry.org)} ${text(entry.location)}`)].filter(Boolean);
+        }),
+        ...projects.flatMap((entry) => {
+            const fromDesc = lines(entry.highlights);
+            if (fromDesc.length) return fromDesc;
+            return [normalizeLine(`${text(entry.name)} ${text(entry.tech)} ${text(entry.link)}`)].filter(Boolean);
+        })
+    ];
     const skills = d.skills.flatMap((entry) => parseSkillItems(entry.items));
 
     return {
@@ -598,8 +700,8 @@ function buildAIProfile() {
             phone: Boolean(text(d.phone).trim()),
             link: Boolean(text(d.website).trim() || text(d.linkedin).trim())
         },
-        experienceCount: experience.length,
-        educationCount: d.education.filter((entry) => text(entry.degree).trim() || text(entry.institution).trim()).length
+        experienceCount: experience.length + projects.length,
+        educationCount: d.education.filter((entry) => text(entry.degree).trim() || text(entry.institution).trim() || text(entry.location).trim() || text(entry.score).trim()).length
     };
 }
 
@@ -714,7 +816,7 @@ function analyzeAIResume() {
         pushInsight("tip", "Summary is short", "Target 35-60 words so it reads with more authority.");
     }
     if (!profile.bulletLines.length) {
-        pushInsight("fix", "Experience outcomes are missing", "Add achievement lines under each role.");
+        pushInsight("fix", "Experience or project outcomes are missing", "Add achievement lines under each role or project.");
     } else {
         if (!metricCount) pushInsight("tip", "No measurable impact found", "Add percentages, cost, users, revenue, or timing outcomes.");
         if (actionCount < Math.ceil(profile.bulletLines.length * 0.5)) pushInsight("tip", "Action verbs are weak", "Start more lines with verbs like Built, Led, Improved, Optimized.");
@@ -997,71 +1099,69 @@ function systemAnalyzerPrompt() {
 }
 
 async function requestOpenAIAnalysis(apiKey, model, userPrompt) {
-    const headers = {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`
-    };
-
     const sys = systemAnalyzerPrompt();
-
-    const responsesBody = {
+    const requestBody = {
+        apiKey,
         model,
-        input: [
-            {
-                role: "system",
-                content: [{ type: "input_text", text: sys }]
-            },
-            {
-                role: "user",
-                content: [{ type: "input_text", text: userPrompt }]
+        prompt: userPrompt,
+        systemPrompt: sys
+    };
+
+    const proxyCandidates = [];
+    const sameOrigin = `${window.location.origin}${OPENAI_PROXY_PATH}`;
+    proxyCandidates.push(sameOrigin);
+    [
+        `http://127.0.0.1:${OPENAI_PROXY_LOCAL_PORT}${OPENAI_PROXY_PATH}`,
+        `http://localhost:${OPENAI_PROXY_LOCAL_PORT}${OPENAI_PROXY_PATH}`
+    ].forEach((url) => {
+        if (!proxyCandidates.includes(url)) proxyCandidates.push(url);
+    });
+
+    let lastProxyError = "";
+
+    for (const endpoint of proxyCandidates) {
+        try {
+            const response = await fetch(endpoint, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(requestBody)
+            });
+
+            const contentType = text(response.headers.get("content-type")).toLowerCase();
+            const looksJson = contentType.includes("application/json");
+            const payload = looksJson ? await response.json().catch(() => ({})) : {};
+
+            if (!response.ok) {
+                const message = extractErrorMessage(payload, `Proxy request failed (${response.status}).`);
+                if (response.status === 404 && endpoint === sameOrigin) {
+                    lastProxyError = message;
+                    continue;
+                }
+                throw new Error(message);
             }
-        ],
-        max_output_tokens: 900,
-        temperature: 0.2
-    };
 
-    const responsesRes = await fetch("https://api.openai.com/v1/responses", {
-        method: "POST",
-        headers,
-        body: JSON.stringify(responsesBody)
-    });
-    const responsesPayload = await responsesRes.json().catch(() => ({}));
+            if (!looksJson) {
+                if (endpoint === sameOrigin) {
+                    lastProxyError = "Proxy route returned non-JSON response.";
+                    continue;
+                }
+                throw new Error("Proxy returned an unexpected response format.");
+            }
 
-    if (responsesRes.ok) {
-        const outputText = extractResponsesText(responsesPayload);
-        if (outputText) return outputText;
-        throw new Error("OpenAI returned an empty analysis.");
+            const outputText = text(payload.output_text || payload.text).trim();
+            if (!outputText) throw new Error(extractErrorMessage(payload, "OpenAI returned an empty analysis."));
+            return outputText;
+        } catch (error) {
+            if (endpoint === sameOrigin) {
+                lastProxyError = error && error.message ? error.message : "Proxy request failed.";
+                continue;
+            }
+            throw error;
+        }
     }
 
-    const firstError = extractErrorMessage(
-        responsesPayload,
-        `OpenAI request failed (${responsesRes.status}).`
-    );
-
-    const chatBody = {
-        model,
-        messages: [
-            { role: "system", content: sys },
-            { role: "user", content: userPrompt }
-        ],
-        max_tokens: 900,
-        temperature: 0.2
-    };
-
-    const chatRes = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers,
-        body: JSON.stringify(chatBody)
-    });
-    const chatPayload = await chatRes.json().catch(() => ({}));
-    if (!chatRes.ok) {
-        const secondError = extractErrorMessage(chatPayload, `Fallback request failed (${chatRes.status}).`);
-        throw new Error(`${firstError} ${secondError}`.trim());
-    }
-
-    const chatText = extractChatCompletionText(chatPayload);
-    if (!chatText) throw new Error("OpenAI returned an empty fallback response.");
-    return chatText;
+    const suffix = lastProxyError ? ` Last error: ${lastProxyError}` : "";
+    throw new Error(`Local OpenAI proxy not reachable. Start server with: node server.js.${suffix}`);
 }
 
 function openAIResultMarkup(result) {
@@ -1152,8 +1252,9 @@ function analyzeQualityHints() {
     if (S.mode === "resume") {
         const d = S.resume;
         const summaryWords = tokenize(d.summary).length;
-        const entries = d.experience.filter((entry) => text(entry.title).trim() || text(entry.company).trim() || text(entry.bullets).trim());
-        const skillCount = text(d.skills).split(/[,\n]/).map((item) => item.trim()).filter(Boolean).length;
+        const entries = d.experience.filter((entry) => text(entry.title).trim() || text(entry.company).trim() || text(entry.location).trim() || text(entry.bullets).trim());
+        const projectEntries = d.projects.filter((entry) => text(entry.name).trim() || text(entry.tech).trim() || text(entry.period).trim() || text(entry.highlights).trim() || text(entry.link).trim());
+        const skillCount = text(d.skills).split(/\n+/).map((item) => item.trim()).filter(Boolean).length;
 
         if (!text(d.email).trim()) addHint("fix", "Add an email address so recruiters can contact you quickly.", 14);
         if (!text(d.phone).trim()) addHint("fix", "Add a phone number for direct callbacks.", 10);
@@ -1168,14 +1269,15 @@ function analyzeQualityHints() {
             addHint("good", "Summary length is in a strong range.");
         }
 
-        if (!entries.length) {
-            addHint("fix", "Add at least one experience entry.", 18);
+        if (!entries.length && !projectEntries.length) {
+            addHint("fix", "Add at least one experience or project entry.", 18);
         } else {
             const bulletLines = [];
             entries.forEach((entry) => bulletLines.push(...lines(entry.bullets)));
+            projectEntries.forEach((entry) => bulletLines.push(...lines(entry.highlights)));
 
             if (bulletLines.length < 3) {
-                addHint("fix", "Add more impact bullets across experience (at least 3 total).", 12);
+                addHint("fix", "Add more impact bullets across experience/projects (at least 3 total).", 12);
             }
 
             const metricRegex = /(\d+%|\d+\+|\$ ?\d|\brs\.? ?\d|\b\d{2,}\b|\brevenue\b|\bcost\b|\busers?\b|\bgrowth\b|\bconversion\b|\blatency\b)/i;
@@ -1186,7 +1288,7 @@ function analyzeQualityHints() {
             if (bulletLines.length && metricCount === 0) {
                 addHint("tip", "Add measurable results to bullets (% , $, time, volume).", 6);
             } else if (metricCount >= 2) {
-                addHint("good", "Experience bullets include measurable impact.");
+                addHint("good", "Experience and project bullets include measurable impact.");
             }
 
             if (bulletLines.length && actionCount < Math.ceil(bulletLines.length * 0.5)) {
@@ -1204,8 +1306,9 @@ function analyzeQualityHints() {
     } else {
         const d = S.cv;
         const summaryWords = tokenize(d.summary).length;
-        const educationCount = d.education.filter((entry) => text(entry.degree).trim() || text(entry.institution).trim()).length;
-        const experienceCount = d.experience.filter((entry) => text(entry.title).trim() || text(entry.org).trim() || text(entry.desc).trim()).length;
+        const educationCount = d.education.filter((entry) => text(entry.degree).trim() || text(entry.institution).trim() || text(entry.location).trim() || text(entry.score).trim()).length;
+        const experienceCount = d.experience.filter((entry) => text(entry.title).trim() || text(entry.org).trim() || text(entry.location).trim() || text(entry.desc).trim()).length;
+        const projectCount = d.projects.filter((entry) => text(entry.name).trim() || text(entry.tech).trim() || text(entry.period).trim() || text(entry.highlights).trim() || text(entry.link).trim()).length;
         const publicationCount = d.publications.filter((entry) => text(entry.title).trim()).length;
         const skillCount = d.skills.reduce((count, entry) => {
             const items = text(entry.items).split(",").map((item) => item.trim()).filter(Boolean);
@@ -1224,7 +1327,7 @@ function analyzeQualityHints() {
         }
 
         if (!educationCount) addHint("fix", "Add at least one education entry.", 16);
-        if (!experienceCount) addHint("fix", "Add at least one experience or research role.", 14);
+        if (!experienceCount && !projectCount) addHint("fix", "Add at least one experience or project entry.", 14);
         if (!publicationCount) addHint("tip", "Include publications/preprints if available for academic roles.", 6);
         if (skillCount < 6) addHint("tip", "Expand skills and tools to improve keyword coverage.", 5);
 
@@ -1482,17 +1585,115 @@ function up() {
     });
 }
 
+function getEditorScrollTop() {
+    const panel = document.getElementById("fp");
+    return panel ? panel.scrollTop : 0;
+}
+
+function restoreEditorScrollTop(value) {
+    const panel = document.getElementById("fp");
+    if (!panel) return;
+    panel.scrollTop = Number.isFinite(value) ? Math.max(0, value) : 0;
+}
+
 function addItem(mode, key) {
+    const editorScrollTop = getEditorScrollTop();
     S[mode][key].push(clone(DEFAULT_ENTRY[mode][key]));
-    render();
+    render({ preserveEditorScrollTop: true, editorScrollTop });
     scheduleSave();
 }
 
 function removeItem(mode, key, index) {
     if (S[mode][key].length <= 1) return;
+    const editorScrollTop = getEditorScrollTop();
     S[mode][key].splice(index, 1);
-    render();
+    render({ preserveEditorScrollTop: true, editorScrollTop });
     scheduleSave();
+}
+
+function resetDragState() {
+    DRAG_STATE.mode = "";
+    DRAG_STATE.key = "";
+    DRAG_STATE.from = -1;
+}
+
+function clearDragClasses() {
+    document.querySelectorAll(".entry.dragging, .entry.drag-over").forEach((node) => {
+        node.classList.remove("dragging");
+        node.classList.remove("drag-over");
+    });
+}
+
+function canReorder(mode, key) {
+    return DRAG_STATE.from >= 0 && DRAG_STATE.mode === mode && DRAG_STATE.key === key;
+}
+
+function dragStartItem(mode, key, index, event) {
+    DRAG_STATE.mode = mode;
+    DRAG_STATE.key = key;
+    DRAG_STATE.from = Number(index);
+
+    if (event && event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", `${mode}:${key}:${index}`);
+    }
+
+    const entry = event && event.target ? event.target.closest(".entry") : null;
+    if (entry) entry.classList.add("dragging");
+}
+
+function dragOverItem(mode, key, index, event) {
+    if (!canReorder(mode, key) || DRAG_STATE.from === Number(index)) return;
+    if (event) {
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    }
+    const entry = event && event.currentTarget ? event.currentTarget : null;
+    if (entry) entry.classList.add("drag-over");
+}
+
+function dragLeaveItem(event) {
+    const entry = event && event.currentTarget ? event.currentTarget : null;
+    if (entry) entry.classList.remove("drag-over");
+}
+
+function dragEndItem() {
+    clearDragClasses();
+    resetDragState();
+}
+
+function dropReorderItem(mode, key, toIndex, event) {
+    if (!canReorder(mode, key)) return;
+    if (event) event.preventDefault();
+
+    const fromIndex = DRAG_STATE.from;
+    const targetIndex = Number(toIndex);
+    clearDragClasses();
+
+    const list = S[mode] && S[mode][key];
+    if (!Array.isArray(list)) {
+        resetDragState();
+        return;
+    }
+    if (
+        !Number.isInteger(fromIndex) ||
+        !Number.isInteger(targetIndex) ||
+        fromIndex < 0 ||
+        targetIndex < 0 ||
+        fromIndex >= list.length ||
+        targetIndex >= list.length ||
+        fromIndex === targetIndex
+    ) {
+        resetDragState();
+        return;
+    }
+
+    const editorScrollTop = getEditorScrollTop();
+    const [moved] = list.splice(fromIndex, 1);
+    list.splice(targetIndex, 0, moved);
+    render({ preserveEditorScrollTop: true, editorScrollTop });
+    scheduleSave();
+    resetDragState();
 }
 
 function setMode(mode) {
@@ -1508,7 +1709,7 @@ function setMobilePane(pane) {
     render();
 }
 
-function printDocument() {
+function printCurrentWindow() {
     if (!S.mode) return;
 
     const isMobile = window.matchMedia("(max-width: 820px)").matches;
@@ -1523,6 +1724,114 @@ function printDocument() {
             window.print();
         });
     });
+}
+
+function printStylesMarkup() {
+    return Array.from(document.querySelectorAll('link[rel="stylesheet"][href]'))
+        .map((link) => `<link rel="stylesheet" href="${esc(link.href)}">`)
+        .join("");
+}
+
+function printSheetMarkup() {
+    if (!S.mode) return "";
+    const preset = normalizeTemplatePreset(S.ui.templatePreset);
+    const previewMarkup = S.mode === "cv" ? cvPrev() : resPrev();
+    return `<div class="doc-wrap"><div class="doc-sheet tpl-${preset}${S.ui.atsMode ? " ats-mode" : ""}" id="pp">${previewMarkup}</div></div>`;
+}
+
+function printDocument() {
+    if (!S.mode) return;
+
+    const modeData = S.mode === "cv" ? S.cv : S.resume;
+    const personName = text(modeData && modeData.name).trim();
+    const kind = S.mode === "cv" ? "CV" : "Resume";
+    const title = personName ? `${personName} - ${kind}` : `${kind} Export`;
+
+    const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>${esc(title)}</title>
+  <base href="${esc(window.location.href)}">
+  ${printStylesMarkup()}
+  <style>
+    html, body { margin: 0; padding: 0; background: #fff; }
+    .doc-wrap { width: 100%; display: block; }
+    .doc-sheet { width: 100%; margin: 0 !important; box-shadow: none !important; border: none !important; min-height: 0 !important; }
+    .doc a, .doc a:visited { color: #2563eb; }
+    .doc-c-link, .doc-c-link:visited { color: inherit; }
+    @page { size: A4; margin: 0; }
+    @media print { .doc { padding: 15mm 20mm !important; } }
+  </style>
+</head>
+<body>
+  ${printSheetMarkup()}
+</body>
+</html>`;
+
+    const frame = document.createElement("iframe");
+    frame.setAttribute("aria-hidden", "true");
+    frame.tabIndex = -1;
+    frame.style.position = "fixed";
+    frame.style.right = "0";
+    frame.style.bottom = "0";
+    frame.style.width = "0";
+    frame.style.height = "0";
+    frame.style.border = "0";
+    frame.style.opacity = "0";
+    frame.style.pointerEvents = "none";
+    document.body.appendChild(frame);
+
+    let cleaned = false;
+    const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        if (frame.parentNode) frame.parentNode.removeChild(frame);
+    };
+
+    const failToCurrentWindow = () => {
+        cleanup();
+        printCurrentWindow();
+    };
+
+    const fallbackTimer = window.setTimeout(() => {
+        cleanup();
+    }, 120000);
+
+    frame.onload = () => {
+        const win = frame.contentWindow;
+        if (!win) {
+            window.clearTimeout(fallbackTimer);
+            failToCurrentWindow();
+            return;
+        }
+
+        const handleAfterPrint = () => {
+            win.removeEventListener("afterprint", handleAfterPrint);
+            window.clearTimeout(fallbackTimer);
+            cleanup();
+        };
+
+        win.addEventListener("afterprint", handleAfterPrint);
+        win.focus();
+        win.requestAnimationFrame(() => {
+            win.requestAnimationFrame(() => {
+                win.print();
+            });
+        });
+    };
+
+    const frameDoc = frame.contentWindow && frame.contentWindow.document;
+    if (!frameDoc) {
+        window.clearTimeout(fallbackTimer);
+        failToCurrentWindow();
+        return;
+    }
+
+    frameDoc.open();
+    frameDoc.write(html);
+    frameDoc.close();
 }
 
 function resetAllData() {
@@ -1576,7 +1885,9 @@ importInput.addEventListener("change", async (event) => {
     }
 });
 
-function render() {
+function render(options = {}) {
+    const preserveEditorScrollTop = Boolean(options.preserveEditorScrollTop);
+    const editorScrollTop = preserveEditorScrollTop ? options.editorScrollTop : 0;
     if (!S.mode) {
         UI.aiPopupOpen = false;
     }
@@ -1587,6 +1898,9 @@ function render() {
         updateAIAnalyzerUI();
         updateSlotStatusUI();
         updateShareLinkUI();
+        if (preserveEditorScrollTop) {
+            restoreEditorScrollTop(editorScrollTop);
+        }
         window.requestAnimationFrame(() => {
             updatePageStatus();
             updateQualityHintsUI();
@@ -1815,7 +2129,7 @@ function toolsPanel() {
                         </div>
                         <div class="ai-pane ai-remote-pane">
                             <div class="ai-subhead">OpenAI Deep Analyzer</div>
-                            <p class="tool-note">API key is kept only in this browser session and is not included in share links or JSON export.</p>
+                            <p class="tool-note">Run <code>node server.js</code> once for proxy access. API key stays in this browser session and is not included in share links or JSON export.</p>
                             <div class="frow o">
                                 <input id="openaiApiKey" type="password" placeholder="OpenAI API key (sk-...)" value="${esc(AI_REMOTE.apiKey)}" oninput="setAIApiKey(this.value)" autocomplete="off">
                             </div>
@@ -1973,17 +2287,25 @@ ${toolsPanel()}
 <div class="fsec"><div class="flbl">Research Summary</div><div class="frow o"><textarea placeholder="Describe your research focus, methods, and contributions..." oninput="S.cv.summary=this.value;up()">${esc(d.summary)}</textarea></div></div>
 
 <div class="fsec"><div class="flbl">Education</div>${d.education.map((e, i) => `
-<div class="entry"><div class="entry-hd"><span class="entry-n">EDU ${n(i)}</span><button class="rbtn" onclick="removeItem('cv','education',${i})">${I.trash} remove</button></div>
+<div class="entry" ondragover="dragOverItem('cv','education',${i},event)" ondragleave="dragLeaveItem(event)" ondrop="dropReorderItem('cv','education',${i},event)"><div class="entry-hd"><span class="entry-hd-left">${dragHandle('cv','education',i)}<span class="entry-n">EDU ${n(i)}</span></span><button class="rbtn" onclick="removeItem('cv','education',${i})">${I.trash} remove</button></div>
 <div class="frow t"><input placeholder="Degree" value="${esc(e.degree)}" oninput="S.cv.education[${i}].degree=this.value;up()"><input placeholder="Institution" value="${esc(e.institution)}" oninput="S.cv.education[${i}].institution=this.value;up()"></div>
-<div class="frow t"><input placeholder="Year" value="${esc(e.year)}" oninput="S.cv.education[${i}].year=this.value;up()"><input placeholder="Thesis / note" value="${esc(e.details)}" oninput="S.cv.education[${i}].details=this.value;up()"></div>
+<div class="frow h"><input placeholder="Year" value="${esc(e.year)}" oninput="S.cv.education[${i}].year=this.value;up()"><input placeholder="Score / CGPA" value="${esc(e.score)}" oninput="S.cv.education[${i}].score=this.value;up()"><input placeholder="Location" value="${esc(e.location)}" oninput="S.cv.education[${i}].location=this.value;up()"></div>
+<div class="frow o"><input placeholder="Thesis / note" value="${esc(e.details)}" oninput="S.cv.education[${i}].details=this.value;up()"></div>
 </div>`).join("")}<button class="abtn" onclick="addItem('cv','education')">${I.plus} Add education</button></div>
 
 <div class="fsec"><div class="flbl">Experience</div>${d.experience.map((e, i) => `
-<div class="entry"><div class="entry-hd"><span class="entry-n">EXP ${n(i)}</span><button class="rbtn" onclick="removeItem('cv','experience',${i})">${I.trash} remove</button></div>
+<div class="entry" ondragover="dragOverItem('cv','experience',${i},event)" ondragleave="dragLeaveItem(event)" ondrop="dropReorderItem('cv','experience',${i},event)"><div class="entry-hd"><span class="entry-hd-left">${dragHandle('cv','experience',i)}<span class="entry-n">EXP ${n(i)}</span></span><button class="rbtn" onclick="removeItem('cv','experience',${i})">${I.trash} remove</button></div>
 <div class="frow t"><input placeholder="Role" value="${esc(e.title)}" oninput="S.cv.experience[${i}].title=this.value;up()"><input placeholder="Organization" value="${esc(e.org)}" oninput="S.cv.experience[${i}].org=this.value;up()"></div>
-<div class="frow o"><input placeholder="Period" value="${esc(e.period)}" oninput="S.cv.experience[${i}].period=this.value;up()"></div>
+<div class="frow t"><input placeholder="Period" value="${esc(e.period)}" oninput="S.cv.experience[${i}].period=this.value;up()"><input placeholder="Location" value="${esc(e.location)}" oninput="S.cv.experience[${i}].location=this.value;up()"></div>
 <div class="frow o"><textarea placeholder="Description..." oninput="S.cv.experience[${i}].desc=this.value;up()">${esc(e.desc)}</textarea></div>
 </div>`).join("")}<button class="abtn" onclick="addItem('cv','experience')">${I.plus} Add position</button></div>
+
+<div class="fsec"><div class="flbl">Projects</div>${d.projects.map((e, i) => `
+<div class="entry" ondragover="dragOverItem('cv','projects',${i},event)" ondragleave="dragLeaveItem(event)" ondrop="dropReorderItem('cv','projects',${i},event)"><div class="entry-hd"><span class="entry-hd-left">${dragHandle('cv','projects',i)}<span class="entry-n">PRJ ${n(i)}</span></span><button class="rbtn" onclick="removeItem('cv','projects',${i})">${I.trash} remove</button></div>
+<div class="frow t"><input placeholder="Project title" value="${esc(e.name)}" oninput="S.cv.projects[${i}].name=this.value;up()"><input placeholder="Tech stack (comma-separated)" value="${esc(e.tech)}" oninput="S.cv.projects[${i}].tech=this.value;up()"></div>
+<div class="frow t"><input placeholder="Period" value="${esc(e.period)}" oninput="S.cv.projects[${i}].period=this.value;up()"><input placeholder="Project Link / GitHub (optional)" value="${esc(e.link)}" oninput="S.cv.projects[${i}].link=this.value;up()"></div>
+<div class="frow o"><textarea placeholder="Highlights - one per line." oninput="S.cv.projects[${i}].highlights=this.value;up()">${esc(e.highlights)}</textarea></div>
+</div>`).join("")}<button class="abtn" onclick="addItem('cv','projects')">${I.plus} Add project</button></div>
 
 <div class="fsec"><div class="flbl">Publications</div>${d.publications.map((e, i) => `
 <div class="entry"><div class="entry-hd"><span class="entry-n">PUB ${n(i)}</span><button class="rbtn" onclick="removeItem('cv','publications',${i})">${I.trash} remove</button></div>
@@ -1993,7 +2315,7 @@ ${toolsPanel()}
 
 <div class="fsec"><div class="flbl">Skills</div>${d.skills.map((e, i) => `
 <div class="entry"><div class="entry-hd"><span class="entry-n">SKL ${n(i)}</span><button class="rbtn" onclick="removeItem('cv','skills',${i})">${I.trash} remove</button></div>
-<div class="frow t"><input placeholder="Category" value="${esc(e.cat)}" oninput="S.cv.skills[${i}].cat=this.value;up()"><input placeholder="Items, comma-separated" value="${esc(e.items)}" oninput="S.cv.skills[${i}].items=this.value;up()"></div>
+<div class="frow t"><input placeholder="Category" value="${esc(e.cat)}" oninput="S.cv.skills[${i}].cat=this.value;up()"><input placeholder="Items, one per line" value="${esc(e.items)}" oninput="S.cv.skills[${i}].items=this.value;up()"></div>
 </div>`).join("")}<button class="abtn" onclick="addItem('cv','skills')">${I.plus} Add group</button></div>
 
 <div class="fsec"><div class="flbl">Languages</div>${d.languages.map((e, i) => `
@@ -2020,23 +2342,32 @@ ${toolsPanel()}
 <div class="fsec"><div class="flbl">Summary</div><div class="frow o"><textarea placeholder="2-3 sentences. Who you are, your superpower, what you are building toward." oninput="S.resume.summary=this.value;up()">${esc(d.summary)}</textarea></div></div>
 
 <div class="fsec"><div class="flbl">Experience</div>${d.experience.map((e, i) => `
-<div class="entry"><div class="entry-hd"><span class="entry-n">EXP ${n(i)}</span><button class="rbtn" onclick="removeItem('resume','experience',${i})">${I.trash} remove</button></div>
+<div class="entry" ondragover="dragOverItem('resume','experience',${i},event)" ondragleave="dragLeaveItem(event)" ondrop="dropReorderItem('resume','experience',${i},event)"><div class="entry-hd"><span class="entry-hd-left">${dragHandle('resume','experience',i)}<span class="entry-n">EXP ${n(i)}</span></span><button class="rbtn" onclick="removeItem('resume','experience',${i})">${I.trash} remove</button></div>
 <div class="frow t"><input placeholder="Job title" value="${esc(e.title)}" oninput="S.resume.experience[${i}].title=this.value;up()"><input placeholder="Company" value="${esc(e.company)}" oninput="S.resume.experience[${i}].company=this.value;up()"></div>
-<div class="frow o"><input placeholder="Period - e.g. Jan 2022 - Present" value="${esc(e.period)}" oninput="S.resume.experience[${i}].period=this.value;up()"></div>
+<div class="frow t"><input placeholder="Period - e.g. Jan 2022 - Present" value="${esc(e.period)}" oninput="S.resume.experience[${i}].period=this.value;up()"><input placeholder="Location" value="${esc(e.location)}" oninput="S.resume.experience[${i}].location=this.value;up()"></div>
 <div class="frow o"><textarea placeholder="Key achievements - one per line, start with a strong action verb." oninput="S.resume.experience[${i}].bullets=this.value;up()">${esc(e.bullets)}</textarea></div>
 </div>`).join("")}<button class="abtn" onclick="addItem('resume','experience')">${I.plus} Add role</button></div>
 
+<div class="fsec"><div class="flbl">Projects</div>${d.projects.map((e, i) => `
+<div class="entry" ondragover="dragOverItem('resume','projects',${i},event)" ondragleave="dragLeaveItem(event)" ondrop="dropReorderItem('resume','projects',${i},event)"><div class="entry-hd"><span class="entry-hd-left">${dragHandle('resume','projects',i)}<span class="entry-n">PRJ ${n(i)}</span></span><button class="rbtn" onclick="removeItem('resume','projects',${i})">${I.trash} remove</button></div>
+<div class="frow t"><input placeholder="Project name" value="${esc(e.name)}" oninput="S.resume.projects[${i}].name=this.value;up()"><input placeholder="Tech stack (comma-separated)" value="${esc(e.tech)}" oninput="S.resume.projects[${i}].tech=this.value;up()"></div>
+<div class="frow t"><input placeholder="Period" value="${esc(e.period)}" oninput="S.resume.projects[${i}].period=this.value;up()"><input placeholder="Project Link / GitHub (optional)" value="${esc(e.link)}" oninput="S.resume.projects[${i}].link=this.value;up()"></div>
+<div class="frow o"><textarea placeholder="Highlights - one per line." oninput="S.resume.projects[${i}].highlights=this.value;up()">${esc(e.highlights)}</textarea></div>
+</div>`).join("")}<button class="abtn" onclick="addItem('resume','projects')">${I.plus} Add project</button></div>
+
 <div class="fsec"><div class="flbl">Education</div>${d.education.map((e, i) => `
-<div class="entry"><div class="entry-hd"><span class="entry-n">EDU ${n(i)}</span><button class="rbtn" onclick="removeItem('resume','education',${i})">${I.trash} remove</button></div>
+<div class="entry" ondragover="dragOverItem('resume','education',${i},event)" ondragleave="dragLeaveItem(event)" ondrop="dropReorderItem('resume','education',${i},event)"><div class="entry-hd"><span class="entry-hd-left">${dragHandle('resume','education',i)}<span class="entry-n">EDU ${n(i)}</span></span><button class="rbtn" onclick="removeItem('resume','education',${i})">${I.trash} remove</button></div>
 <div class="frow t"><input placeholder="Degree" value="${esc(e.degree)}" oninput="S.resume.education[${i}].degree=this.value;up()"><input placeholder="School" value="${esc(e.school)}" oninput="S.resume.education[${i}].school=this.value;up()"></div>
-<div class="frow o"><input placeholder="Graduation year" value="${esc(e.year)}" oninput="S.resume.education[${i}].year=this.value;up()"></div>
+<div class="frow h"><input placeholder="Graduation year" value="${esc(e.year)}" oninput="S.resume.education[${i}].year=this.value;up()"><input placeholder="Score / CGPA" value="${esc(e.score)}" oninput="S.resume.education[${i}].score=this.value;up()"><input placeholder="Location" value="${esc(e.location)}" oninput="S.resume.education[${i}].location=this.value;up()"></div>
 </div>`).join("")}<button class="abtn" onclick="addItem('resume','education')">${I.plus} Add education</button></div>
 
-<div class="fsec"><div class="flbl">Skills</div><div class="frow o"><textarea placeholder="Comma or newline separated - React, TypeScript, Node.js, AWS..." oninput="S.resume.skills=this.value;up()">${esc(d.skills)}</textarea></div></div>
+<div class="fsec"><div class="flbl">Skills</div><div class="frow o"><textarea placeholder="One skill per line - React&#10;TypeScript&#10;Node.js&#10;AWS" oninput="S.resume.skills=this.value;up()">${esc(d.skills)}</textarea></div></div>
 
 <div class="fsec"><div class="flbl">Certifications</div>${d.certifications.map((e, i) => `
-<div class="entry"><div class="entry-hd"><span class="entry-n">CRT ${n(i)}</span><button class="rbtn" onclick="removeItem('resume','certifications',${i})">${I.trash} remove</button></div>
+<div class="entry" ondragover="dragOverItem('resume','certifications',${i},event)" ondragleave="dragLeaveItem(event)" ondrop="dropReorderItem('resume','certifications',${i},event)"><div class="entry-hd"><span class="entry-hd-left">${dragHandle('resume','certifications',i)}<span class="entry-n">CRT ${n(i)}</span></span><button class="rbtn" onclick="removeItem('resume','certifications',${i})">${I.trash} remove</button></div>
 <div class="frow h"><input placeholder="Certification name" value="${esc(e.name)}" oninput="S.resume.certifications[${i}].name=this.value;up()"><input placeholder="Issuer" value="${esc(e.org)}" oninput="S.resume.certifications[${i}].org=this.value;up()"><input placeholder="Year" value="${esc(e.year)}" oninput="S.resume.certifications[${i}].year=this.value;up()"></div>
+<div class="frow o"><input placeholder="Credential URL (Link)" value="${esc(e.url)}" oninput="S.resume.certifications[${i}].url=this.value;up()"></div>
+<div class="frow o"><label class="cert-toggle"><input type="checkbox" ${e.offline ? "checked" : ""} onchange="S.resume.certifications[${i}].offline=this.checked?'yes':'';up()">This certificate is offline / email-based</label></div>
 </div>`).join("")}<button class="abtn" onclick="addItem('resume','certifications')">${I.plus} Add certification</button></div>`;
 }
 
@@ -2045,8 +2376,9 @@ function cvPrev() {
     const contacts = [d.email, d.phone, d.website, d.location, d.linkedin].filter(Boolean);
     const hasAny = d.name || d.title || contacts.length ||
         d.summary ||
-        d.education.some((e) => e.degree || e.institution) ||
-        d.experience.some((e) => e.title || e.org) ||
+        d.education.some((e) => e.degree || e.institution || e.location || e.score) ||
+        d.experience.some((e) => e.title || e.org || e.location) ||
+        d.projects.some((e) => e.name || e.tech || e.period || e.highlights || e.link) ||
         d.publications.some((e) => e.title) ||
         d.skills.some((e) => e.items) ||
         d.languages.some((e) => e.lang) ||
@@ -2062,12 +2394,13 @@ ${d.title ? `<div class="doc-title">${esc(d.title)}</div>` : ""}
 ${contacts.length ? contactMarkup(contacts) : ""}
 <div class="doc-hr"></div>
 ${d.summary ? `<div class="doc-sum">${esc(d.summary)}</div>` : ""}
-${d.education.some((e) => e.degree || e.institution) ? `<div class="doc-sec"><div class="doc-sh">Education</div>${d.education.filter((e) => e.degree || e.institution).map((e) => `<div class="doc-item"><div class="doc-row"><span class="doc-it">${esc(e.degree)}</span><span class="doc-dt">${esc(e.year)}</span></div><div class="doc-sub">${esc(e.institution)}</div>${e.details ? `<div class="doc-body">${esc(e.details)}</div>` : ""}</div>`).join("")}</div>` : ""}
-${d.experience.some((e) => e.title || e.org) ? `<div class="doc-sec"><div class="doc-sh">Experience</div>${d.experience.filter((e) => e.title || e.org).map((e) => `<div class="doc-item"><div class="doc-row"><span class="doc-it">${esc(e.title)}</span><span class="doc-dt">${esc(e.period)}</span></div><div class="doc-sub">${esc(e.org)}</div>${e.desc ? `<div class="doc-body">${esc(e.desc)}</div>` : ""}</div>`).join("")}</div>` : ""}
+${d.education.some((e) => e.degree || e.institution || e.location || e.score) ? `<div class="doc-sec"><div class="doc-sh">Education</div>${d.education.filter((e) => e.degree || e.institution || e.location || e.score).map((e) => `<div class="doc-item"><div class="doc-row"><span class="doc-it">${esc(e.degree)}</span><span class="doc-dt">${[e.year, e.score].filter(Boolean).map(esc).join(" | ")}</span></div>${(e.institution || e.location) ? `<div class="doc-sub">${[e.institution, e.location].filter(Boolean).map(esc).join(" | ")}</div>` : ""}${e.details ? `<div class="doc-body">${esc(e.details)}</div>` : ""}</div>`).join("")}</div>` : ""}
+${d.experience.some((e) => e.title || e.org || e.location) ? `<div class="doc-sec"><div class="doc-sh">Experience</div>${d.experience.filter((e) => e.title || e.org || e.location).map((e) => `<div class="doc-item"><div class="doc-row"><span class="doc-it">${esc(e.title)}</span><span class="doc-dt">${esc(e.period)}</span></div>${(e.org || e.location) ? `<div class="doc-sub">${[e.org, e.location].filter(Boolean).map(esc).join(" | ")}</div>` : ""}${e.desc ? `<div class="doc-body">${esc(e.desc)}</div>` : ""}</div>`).join("")}</div>` : ""}
+${d.projects.some((e) => e.name || e.tech || e.period || e.highlights || e.link) ? `<div class="doc-sec"><div class="doc-sh">Projects</div>${d.projects.filter((e) => e.name || e.tech || e.period || e.highlights || e.link).map((e) => `<div class="doc-item"><div class="doc-row"><span class="doc-it">${esc(e.name)}</span><span class="doc-dt">${esc(e.period)}</span></div>${commaSeparated(e.tech) ? `<div class="doc-sub">${esc(commaSeparated(e.tech))}</div>` : ""}${e.highlights ? `<div class="doc-body">${esc(e.highlights)}</div>` : ""}${e.link ? `<div class="doc-body">${externalLinkMarkup(e.link, "Project Link / GitHub")}</div>` : ""}</div>`).join("")}</div>` : ""}
 ${d.publications.some((e) => e.title) ? `<div class="doc-sec"><div class="doc-sh">Publications</div>${d.publications.filter((e) => e.title).map((e) => `<div class="doc-item"><div class="doc-row"><span class="doc-it">${esc(e.title)}</span><span class="doc-dt">${esc(e.year)}</span></div><div class="doc-sub">${[e.venue, e.authors].filter(Boolean).map(esc).join(" | ")}</div></div>`).join("")}</div>` : ""}
 ${d.skills.some((e) => e.items) ? `<div class="doc-sec"><div class="doc-sh">Skills and Tools</div>${d.skills.filter((e) => e.items).map((e) => {
-        const list = e.items.split(",").map((s) => s.trim()).filter(Boolean);
-        return `<div class="doc-item">${e.cat ? `<div class="doc-sub" style="font-weight:500;color:var(--paper-text);margin-bottom:4px">${esc(e.cat)}</div>` : ""}${S.ui.atsMode ? `<div class="doc-body doc-plain-list">${esc(list.join(", "))}</div>` : `<div class="doc-tags">${list.map((s) => `<span class="doc-tag">${esc(s)}</span>`).join("")}</div>`}</div>`;
+        const list = e.items.split(/\n+/).map((s) => s.trim()).filter(Boolean);
+        return `<div class="doc-item">${e.cat ? `<div class="doc-sub" style="font-weight:500;color:var(--paper-text);margin-bottom:4px">${esc(e.cat)}</div>` : ""}${S.ui.atsMode ? `<div class="doc-body doc-plain-list">${list.map((s) => esc(s)).join("<br>")}</div>` : `<div class="doc-tags">${list.map((s) => `<span class="doc-tag">${esc(s)}</span>`).join("")}</div>`}</div>`;
     }).join("")}</div>` : ""}
 ${d.languages.some((e) => e.lang) ? `<div class="doc-sec"><div class="doc-sh">Languages</div><div class="doc-langs">${d.languages.filter((e) => e.lang).map((e) => `<span class="doc-lang"><strong>${esc(e.lang)}</strong> <span>${esc(e.level)}</span></span>`).join("")}</div></div>` : ""}
 ${d.awards.some((e) => e.title) ? `<div class="doc-sec"><div class="doc-sh">Awards and Honors</div>${d.awards.filter((e) => e.title).map((e) => `<div class="doc-item"><div class="doc-row"><span class="doc-it">${esc(e.title)}</span><span class="doc-dt">${esc(e.year)}</span></div>${e.org ? `<div class="doc-sub">${esc(e.org)}</div>` : ""}</div>`).join("")}</div>` : ""}
@@ -2077,12 +2410,13 @@ ${d.awards.some((e) => e.title) ? `<div class="doc-sec"><div class="doc-sh">Awar
 function resPrev() {
     const d = S.resume;
     const contacts = [d.email, d.phone, d.location, d.website, d.linkedin].filter(Boolean);
-    const skills = d.skills ? d.skills.split(/[,\n]/).map((s) => s.trim()).filter(Boolean) : [];
+    const skills = d.skills ? d.skills.split(/\n+/).map((s) => s.trim()).filter(Boolean) : [];
     const hasAny = d.name || contacts.length || d.summary ||
-        d.experience.some((e) => e.title || e.company) ||
-        d.education.some((e) => e.degree || e.school) ||
+        d.experience.some((e) => e.title || e.company || e.location) ||
+        d.projects.some((e) => e.name || e.tech || e.period || e.highlights || e.link) ||
+        d.education.some((e) => e.degree || e.school || e.location || e.score) ||
         skills.length ||
-        d.certifications.some((e) => e.name);
+        d.certifications.some((e) => e.name || e.org || e.year || e.url || e.offline);
 
     if (!hasAny) {
         return `<div class="doc"><div class="doc-empty">Start filling in your details<br>and your resume will appear here.</div></div>`;
@@ -2093,10 +2427,11 @@ function resPrev() {
 ${contacts.length ? contactMarkup(contacts) : ""}
 <div class="doc-hr"></div>
 ${d.summary ? `<div class="doc-sum">${esc(d.summary)}</div>` : ""}
-${d.experience.some((e) => e.title || e.company) ? `<div class="doc-sec"><div class="doc-sh">Experience</div>${d.experience.filter((e) => e.title || e.company).map((e) => `<div class="doc-item"><div class="doc-row"><span class="doc-it">${esc(e.title)}</span><span class="doc-dt">${esc(e.period)}</span></div><div class="doc-sub">${esc(e.company)}</div>${e.bullets ? `<ul class="doc-bul">${e.bullets.split("\n").filter((b) => b.trim()).map((b) => `<li>${esc(b.trim())}</li>`).join("")}</ul>` : ""}</div>`).join("")}</div>` : ""}
-${d.education.some((e) => e.degree || e.school) ? `<div class="doc-sec"><div class="doc-sh">Education</div>${d.education.filter((e) => e.degree || e.school).map((e) => `<div class="doc-item"><div class="doc-row"><span class="doc-it">${esc(e.degree)}</span><span class="doc-dt">${esc(e.year)}</span></div><div class="doc-sub">${esc(e.school)}</div></div>`).join("")}</div>` : ""}
-${skills.length ? `<div class="doc-sec"><div class="doc-sh">Skills</div>${S.ui.atsMode ? `<div class="doc-body doc-plain-list">${esc(skills.join(", "))}</div>` : `<div class="doc-tags">${skills.map((s) => `<span class="doc-tag">${esc(s)}</span>`).join("")}</div>`}</div>` : ""}
-${d.certifications.some((e) => e.name) ? `<div class="doc-sec"><div class="doc-sh">Certifications</div>${d.certifications.filter((e) => e.name).map((e) => `<div class="doc-item"><div class="doc-row"><span class="doc-it">${esc(e.name)}</span><span class="doc-dt">${esc(e.year)}</span></div><div class="doc-sub">${esc(e.org)}</div></div>`).join("")}</div>` : ""}
+${d.projects.some((e) => e.name || e.tech || e.period || e.highlights || e.link) ? `<div class="doc-sec"><div class="doc-sh">Projects</div>${d.projects.filter((e) => e.name || e.tech || e.period || e.highlights || e.link).map((e) => `<div class="doc-item"><div class="doc-row"><span class="doc-it">${esc(e.name)}</span><span class="doc-dt">${esc(e.period)}</span></div>${commaSeparated(e.tech) ? `<div class="doc-sub">${esc(commaSeparated(e.tech))}</div>` : ""}${e.highlights ? `<ul class="doc-bul">${e.highlights.split("\n").filter((b) => b.trim()).map((b) => `<li>${esc(b.trim())}</li>`).join("")}</ul>` : ""}${e.link ? `<div class="doc-body">${externalLinkMarkup(e.link, "Project Link / GitHub")}</div>` : ""}</div>`).join("")}</div>` : ""}
+${skills.length ? `<div class="doc-sec"><div class="doc-sh">Skills</div>${S.ui.atsMode ? `<div class="doc-body doc-plain-list">${skills.map((s) => esc(s)).join("<br>")}</div>` : `<div class="doc-tags">${skills.map((s) => `<span class="doc-tag">${esc(s)}</span>`).join("")}</div>`}</div>` : ""}
+${d.education.some((e) => e.degree || e.school || e.location || e.score) ? `<div class="doc-sec"><div class="doc-sh">Education</div>${d.education.filter((e) => e.degree || e.school || e.location || e.score).map((e) => `<div class="doc-item"><div class="doc-row"><span class="doc-it">${esc(e.degree)}</span><span class="doc-dt">${[e.year, e.score].filter(Boolean).map(esc).join(" | ")}</span></div>${(e.school || e.location) ? `<div class="doc-sub">${[e.school, e.location].filter(Boolean).map(esc).join(" | ")}</div>` : ""}</div>`).join("")}</div>` : ""}
+${d.certifications.some((e) => e.name || e.org || e.year || e.url || e.offline) ? `<div class="doc-sec"><div class="doc-sh">Certifications</div>${d.certifications.filter((e) => e.name || e.org || e.year || e.url || e.offline).map((e) => `<div class="doc-item"><div class="doc-row"><span class="doc-it">${esc(e.name)}</span><span class="doc-dt">${esc(e.year)}</span></div>${e.org ? `<div class="doc-sub">${esc(e.org)}</div>` : ""}${e.url ? `<div class="doc-body">${externalLinkMarkup(e.url, "View Credential")}</div>` : ""}${e.offline ? `<div class="doc-body"><span class="doc-badge">Verified by issuer</span></div>` : ""}</div>`).join("")}</div>` : ""}
+${d.experience.some((e) => e.title || e.company || e.location) ? `<div class="doc-sec"><div class="doc-sh">Experience</div>${d.experience.filter((e) => e.title || e.company || e.location).map((e) => `<div class="doc-item"><div class="doc-row"><span class="doc-it">${esc(e.title)}</span><span class="doc-dt">${esc(e.period)}</span></div>${(e.company || e.location) ? `<div class="doc-sub">${[e.company, e.location].filter(Boolean).map(esc).join(" | ")}</div>` : ""}${e.bullets ? `<ul class="doc-bul">${e.bullets.split("\n").filter((b) => b.trim()).map((b) => `<li>${esc(b.trim())}</li>`).join("")}</ul>` : ""}</div>`).join("")}</div>` : ""}
 </div>`;
 }
 
